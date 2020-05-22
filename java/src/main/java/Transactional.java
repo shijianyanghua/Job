@@ -26,7 +26,10 @@ import java.lang.annotation.Target;
 import org.springframework.transaction.TransactionDefinition;
 
 /**
- * Describes transaction attributes on a method or class.
+ * Describes transaction attributes on a method or class. //描述事务的属性在一个方法或者类上（个人觉得应该是使用事务的属性在方法或者类上）
+ *
+ * 这种注释类型通常可以直接与Spring的注释类型进行比较，
+ * 实际上将直接将数据转换为后者，因此Spring的事务支持代码不必知道注释。 如果没有规则与异常相关，则将其视为回滚运行时异常
  *
  * <p>This annotation type is generally directly comparable to Spring's
  * {@link org.springframework.transaction.interceptor.RuleBasedTransactionAttribute}
