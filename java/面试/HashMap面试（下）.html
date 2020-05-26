@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <meta name="exporter-version" content="Evernote Mac 9.3.3 (459822)"/>
+    <meta name="author" content="1162913927@qq.com"/>
+    <meta name="created" content="2020-04-18 11:38:59 +0000"/>
+    <meta name="source" content="desktop.mac"/>
+    <meta name="updated" content="2020-05-26 08:44:23 +0000"/>
+    <title>HashMap总结（下）</title></head>
+<body>
+<div>
+    HashMap的总结总算到了最后一期，目前就自己了解到的来说关于hashmap的最后三点。其实还是会说很多废话，因为所有的答案在源码中都已经有了解读，在这里我只能说做一些自我的理解，方便大家理解hashMap。废话不多说，进入到我们今天的总结：
+</div>
+<ol>
+    <li>
+        <div>hashMap为什么会死循环？</div>
+    </li>
+    <li>
+        <div>头插入和尾插入区别</div>
+    </li>
+</ol>
+<hr/>
+<div>1.hashMap为什么会死循环？（待<span style="color: rgb(255, 38, 0);">完成</span>）</div>
+<div> 很多人都说hashMap会死循环，死循环主要是出现在多线程中的扩容情况下导致的，也就是插入数据，1.7 <span
+        style="orphans: 2; widows: 2; color: rgb(26, 26, 26); font-family: -apple-system, system-ui, &quot;Helvetica Neue&quot;, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, &quot;Source Han Sans SC&quot;, &quot;Noto Sans CJK SC&quot;, &quot;WenQuanYi Micro Hei&quot;, sans-serif;">HashMap一次扩容的过程：</span>
+</div>
+<ul>
+    <li>
+        <div><span
+                style="orphans: 2; widows: 2; color: rgb(26, 26, 26); font-family: -apple-system, system-ui, &quot;Helvetica Neue&quot;, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, &quot;Source Han Sans SC&quot;, &quot;Noto Sans CJK SC&quot;, &quot;WenQuanYi Micro Hei&quot;, sans-serif;">取当前table的2倍作为新table的大小</span>
+        </div>
+    </li>
+    <li>
+        <div><span
+                style="orphans: 2; widows: 2; color: rgb(26, 26, 26); font-family: -apple-system, system-ui, &quot;Helvetica Neue&quot;, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, &quot;Source Han Sans SC&quot;, &quot;Noto Sans CJK SC&quot;, &quot;WenQuanYi Micro Hei&quot;, sans-serif;">根据算出的新table的大小new出一个新的Entry数组来，名为newTable</span>
+        </div>
+    </li>
+    <li>
+        <div><span
+                style="orphans: 2; widows: 2; color: rgb(26, 26, 26); font-family: -apple-system, system-ui, &quot;Helvetica Neue&quot;, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, &quot;Source Han Sans SC&quot;, &quot;Noto Sans CJK SC&quot;, &quot;WenQuanYi Micro Hei&quot;, sans-serif;">轮询原table的每一个位置，将每个位置上连接的Entry，算出在新table上的位置，并以链表形式连接</span>
+        </div>
+    </li>
+    <li>
+        <div><span
+                style="orphans: 2; widows: 2; color: rgb(26, 26, 26); font-family: -apple-system, system-ui, &quot;Helvetica Neue&quot;, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, &quot;Source Han Sans SC&quot;, &quot;Noto Sans CJK SC&quot;, &quot;WenQuanYi Micro Hei&quot;, sans-serif;">原table上的所有Entry全部轮询完毕之后，意味着原table上面的所有Entry已经移到了新的table上，HashMap中的table指向newTable</span>
+        </div>
+    </li>
+</ul>
+<div>代码中主要是以下：</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">void resize(int newCapacity)</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">{</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    Entry[] oldTable = table;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    int oldCapacity = oldTable.length;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    ......</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    //创建一个新的Hash Table</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    Entry[] newTable = new Entry[newCapacity];</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    //将Old Hash Table上的数据迁移到New Hash Table上</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    transfer(newTable);</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    table = newTable;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    threshold = (int)(newCapacity * loadFactor);</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">}</span>
+</div>
+<div><br/></div>
+<hr/>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <br/></div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">void transfer(Entry[] newTable)</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">{</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    Entry[] src = table;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    int newCapacity = newTable.length;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    //下面这段代码的意思是：</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    //  从OldTable里摘一个元素出来，然后放到NewTable中</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    for (int j = 0; j &lt; src.length; j++) {</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">        Entry&lt;K,V&gt; e = src[j];</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">        if (e != null) {</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">            src[j] = null;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">            do {</span>
+</div>
+<div style="font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;"><span
+        style="background-color: rgb(245, 245, 245); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857; color: rgb(51, 51, 51);">                Entry&lt;K,V&gt; next = e.next;//线程1 执行到这里停滞，</span><span
+        style="font-size: 14px; letter-spacing: normal; orphans: 2; text-indent: 0px; text-transform: none; white-space: pre; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; font-family: Consolas, Inconsolata, Courier, monospace; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">e为10，next为2。CPU调度线程2继续执行</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">                int i = indexFor(e.hash, newCapacity);</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">                e.next = newTable[i];</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">                newTable[i] = e;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">                e = next;</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">            } while (e != null);</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">        }</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">    }</span>
+</div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;">}</span>
+</div>
+<hr/>
+<div>下面我们说明如何死循环的再多线程条件下：</div>
+<div><img src="HashMap%E6%80%BB%E7%BB%93%EF%BC%88%E4%B8%8B%EF%BC%89.resources/3D2BF4A2-7FCA-49E4-B208-2462AC0D2169.png"
+          height="418" width="984"/><br/></div>
+<div>线程1添加18需要扩容，线程2添加20需要扩容：</div>
+<ul>
+    <li>
+        <div><span
+                style="letter-spacing: normal; orphans: 2; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; font-size: 14px; color: rgb(62, 62, 62); font-family: &quot;Helvetica Neue&quot;, Helvetica, &quot;Hiragino Sans GB&quot;, &quot;Microsoft YaHei&quot;, Arial, sans-serif; font-variant-caps: normal; font-variant-ligatures: normal;">线程1首先获取到CPU执行权，执行transfer()中代码。然后停止</span>
+        </div>
+    </li>
+    <li>
+        <div><span
+                style="font-size: 14px; orphans: 2; widows: 2; color: rgb(62, 62, 62); font-family: &quot;Helvetica Neue&quot;, Helvetica, &quot;Hiragino Sans GB&quot;, &quot;Microsoft YaHei&quot;, Arial, sans-serif;">线程2此时获取到CPU执行权，执行transfer()中代码</span>
+        </div>
+    </li>
+    <ul>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);"> </span><span style="color: rgb(62, 62, 62);">第一次遍历：e为10，next为2，rehash为false，i为2，newTable[2]为null，10.next为null，newTable[2]为10，e为2。</span>
+            </div>
+        </li>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);"> </span><span style="color: rgb(62, 62, 62);">第二次遍历：e为2，next为null，rehash为false，i为2，newTable[2]为10，2.next为10，newTable[2]为2，e为null。</span>
+            </div>
+        </li>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);"> 第三次遍历：e为null，退出循环。</span></div>
+        </li>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);">注意，此时原table中元素2的next指向了10。
+</span></div>
+        </li>
+    </ul>
+    <li>
+        <div><span style="color: rgb(62, 62, 62);"> 线程1继续执行</span></div>
+    </li>
+    <ul>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);">当前：e为10，next为2，rehash为false，i为2，newTable[2]为null，修改：10.next为null，newTable[2]为10，e为2。</span>
+            </div>
+        </li>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);">第二次遍历：当前：e为2，next为10【线程2执行后的结果】，rehash为false，i为2，newTable[2]为10，修改：2.next为10，newTable[2]为2，e为10。</span>
+            </div>
+        </li>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);">第三次遍历：当前：e为10，next为null，rehash为false，i为2，newTable[2]为2，修改：10.next为2，newTable[2]为10，e为null，退出循环。</span>
+            </div>
+        </li>
+        <li>
+            <div><span style="color: rgb(62, 62, 62);">此时，链表成环，如果进行查找，会陷入死循环！！！
+</span></div>
+        </li>
+    </ul>
+</ul>
+<div><br/></div>
+<div><br/></div>
+<hr/>
+<div><br/></div>
+<div>2.头插入和尾插入区别？</div>
+<div><span style="font-size: 14px; font-family: &quot;Helvetica Neue&quot;;">1.8之前采用的是头插入方法。1.8采用的是尾插入头插法是操作速度最快的，找到数组位置就直接找到插入位置了，jdk8之前hashmap这种插入方法在并发场景下如果多个线程同时扩容会出现循环列表。jdk8开始hashmap链表在节点长度达到8之后会变成红黑树，这样一来在数组后节点长度不断增加时，遍历一次的次数就会少很多很多（否则每次要遍历所有），相比头插法而言，尾插法操作额外的遍历消耗已经小很多了，也可以避免之前的循环列表问题。</span><span
+        style="font-size: 14px; letter-spacing: normal; orphans: 2; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; color: rgb(62, 62, 62); font-family: &quot;Helvetica Neue&quot;; font-variant-caps: normal; font-variant-ligatures: normal;">1.7扩容时需要重新计算哈希值和索引位置，1.8并不重新计算哈希值，巧妙地采用和扩容后容量进行&amp;操作来计算新的索引位置。</span>
+</div>
+<div style="orphans: 2; widows: 2;"><span
+        style="orphans: 2; widows: 2; font-size: 14px; font-family: &quot;Helvetica Neue&quot;;">1.7头插入举例说明：（大致意思，真正的hash是调用object的）</span>
+</div>
+<ul>
+    <li>
+        <div style="orphans: 2; widows: 2;"><span style="orphans: 2; widows: 2;">创建长度为8的map。依次把0 1 2 3 4 放入进下表0 1 2 3 4 中：</span>
+        </div>
+    </li>
+</ul>
+<div><img src="img/6B341988-EC28-47C5-BF6A-87C98885CCBF.png"
+          height="246" width="690"/><br/></div>
+<ul>
+    <li>
+        <div>添加10，假如hash冲突，并且放在头插入在2前面：</div>
+    </li>
+</ul>
+<div><img src="img/869A2C3B-27FA-4866-8998-82911EFDA644.png"
+          height="354" width="1106"/><br/></div>
+<ul>
+    <li>
+        <div>添加18，发现不够了。开始扩容：</div>
+    </li>
+</ul>
+<div><br/></div>
+<div><img src="img/269208F7-23FF-4591-AB06-81C8B0406AA1.png"
+          height="308" width="996"/><br/></div>
+<ul>
+    <li>
+        <div>扩容之后的新map（大家发现2又在10前面了，这个就是扩容之后所谓的头插入）</div>
+    </li>
+</ul>
+<div><img src="img/D9F17135-0ED2-4DAF-A1D6-AAB772278D59.png"
+          height="254" width="990"/><br/></div>
+<ul>
+    <li>
+        <div>插入18（18也算hash冲突 放在下标为2的地）:</div>
+    </li>
+</ul>
+<div><img src="img/308FB8C5-44BD-44E3-808F-6F934FB10753.png"
+          height="358" width="1036"/><br/></div>
+<div><br/></div>
+<div>1.8的尾插入法：跟上面1.7头插入扩容之后的图不同，其他的条件是一样。1.8的扩容是不需要重新计算hash的，而是采用&amp;操作的，直接还是原来的位置。</div>
+<div><br/></div>
+<div><br/></div>
+<div>我等采石之人，当心怀大教堂之愿景！</div>
+<div>欢迎关注我的公众号！！</div>
+<div><img src="img/qrcode_for_gh_d2fa89a0f34a_258.jpg"
+          height="258" width="258"/></div>
+<div style="background-color: rgb(245, 245, 245); font-size: 13px; letter-spacing: normal; orphans: 2; widows: 2; word-spacing: 0px;">
+    <span style="color: rgb(51, 51, 51); font-family: Menlo, Monaco, Consolas, &quot;Courier New&quot;, monospace; font-size: 13px; font-variant-caps: normal; font-variant-ligatures: normal; line-height: 1.42857;"/>
+</div>
+</body>
+</html>

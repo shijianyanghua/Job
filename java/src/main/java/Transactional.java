@@ -128,7 +128,8 @@ public @interface Transactional {
      * exception class and subclasses.
      * <p>Similar to {@link org.springframework.transaction.interceptor.RollbackRuleAttribute#RollbackRuleAttribute(Class clazz)}
      * <p>
-     * 回滚的异常 只能是回滚runtimeExceptional
+     * 回滚的异常 默认只能是回滚runtimeExceptional
+     * 要想全部回滚 需要 加rollback=exceptional.class
      * CheckedException不回滚：
      * Java认为Checked异常都是可以被处理的异常，所以Java程序必须显式的处理Checked异常，如果程序没有处理checked异常，程序在编译时候将发生错误。
      * 我们比较熟悉的Checked异常有

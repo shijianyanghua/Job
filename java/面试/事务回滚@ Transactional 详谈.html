@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <meta name="exporter-version" content="Evernote Mac 9.3.3 (459822)"/>
+    <meta name="author" content="1162913927@qq.com"/>
+    <meta name="created" content="2020-05-12 11:12:32 +0000"/>
+    <meta name="source" content="desktop.mac"/>
+    <meta name="updated" content="2020-05-26 08:55:23 +0000"/>
+    <meta name="content-class" content="yinxiang.markdown"/>
+    <title>事务回滚@ Transactional 详谈</title></head>
+<body>
+<div style="font-size: 14px; margin: 0; padding: 0; width: 100%;"><p
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+
+        <img src="img/1BD8150F-A49F-406D-9C1C-6A990AE72B5B.png"
+             height="258" width="1234"/></p>
+        style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">前言：<br/>
+    事务回滚我们总是在用到，但是有可能不太了解具体的细节，接下来我会通过源码解读以及真实的案例测试，来说明。<br/>
+    接下来我会从三方面来讲述事务的运用：</p>
+    <ol style="line-height: 160%; box-sizing: content-box; display: block; padding-left: 30px; margin: 6px 0 10px; color: #333; list-style-type: decimal;">
+        <li style="line-height: 160%; box-sizing: content-box;">源码解读</li>
+        <li style="line-height: 160%; box-sizing: content-box;">事务使用</li>
+        <li style="line-height: 160%; box-sizing: content-box;">事务的失效场景</li>
+    </ol>
+    <h3 style="line-height: 160%; box-sizing: content-box; font-weight: 700; font-size: 27px; color: #333;">1.源码解读</h3>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;">
+/**
+ 描述事务的属性在一个方法或者类上（个人觉得应该是使用事务的属性在方法或者类上）
+ *&lt;p&gt;
+  这种注释类型通常可以直接与Spring的注释类型进行比较，
+ 实际上将直接将数据转换为后者，因此Spring的事务支持代码不必知道注释。 如果没有规则与异常相关，则将其视为回滚运行时异常
+ */
+
+@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface Transactional {
+
+    /**
+     * 主要是spring不提供事务管理器，可以通过这个去定义自己想要的事务管理器，例如hibernate的、JTA的、JDBC的
+     * 大致上有以下几种
+     * org.springframework.jdbc.datasource.DataSourceTransactionManager  DBC及iBATIS、MyBatis框架事务管理器
+     * org.springframework.orm.jdo.JdoTransactionManager Jdo事务管理器
+     * org.springframework.orm.jpa.JpaTransactionManager Jpa事务管理器
+     * org.springframework.orm.hibernate3.HibernateTransactionManager  hibernate事务管理器
+     * org.springframework.transaction.jta.JtaTransactionManager Jta事务管理器
+     */
+    String value() default "";
+
+
+    /**
+     * * 事务传播类型 默认是required 具体解释如下：
+     * @Transactional(propagation=Propagation.REQUIRED) ：如果有事务, 那么加入事务, 没有的话新建一个(默认情况下)
+     * @Transactional(propagation=Propagation.NOT_SUPPORTED) ：容器不为这个方法开启事务
+     * @Transactional(propagation=Propagation.REQUIRES_NEW) ：不管是否存在事务,都创建一个新的事务,原来的挂起,新的执行完毕,继续执行老的事务
+     * @Transactional(propagation=Propagation.MANDATORY) ：必须在一个已有的事务中执行,否则抛出异常
+     * @Transactional(propagation=Propagation.NEVER) ：必须在一个没有的事务中执行,否则抛出异常(与Propagation.MANDATORY相反)
+     * @Transactional(propagation=Propagation.SUPPORTS) ：如果其他bean调用这个方法,在其他bean中声明事务,那就用事务.如果其他bean没有声明事务,那就不用事务.
+     * &lt;p&gt;
+     */
+    Propagation propagation() default Propagation.REQUIRED;
+
+
+    /**
+     * 事务的隔离机制 默认是数据库的隔离机制 需要是innodb引擎数据库才可以
+     * READ_UNCOMMITTED(TransactionDefinition.ISOLATION_READ_UNCOMMITTED),  	读取未提交数据(会出现脏读, 不可重复读) 基本不使用
+     * READ_COMMITTED(TransactionDefinition.ISOLATION_READ_COMMITTED), 读取已提交数据(会出现不可重复读和幻读)
+     * REPEATABLE_READ(TransactionDefinition.ISOLATION_REPEATABLE_READ), 可重复读(会出现幻读)
+     * SERIALIZABLE(TransactionDefinition.ISOLATION_SERIALIZABLE); 串行化
+     */
+    Isolation isolation() default Isolation.DEFAULT;
+
+
+    /*
+     * 事务超时时间 默认-1 永远不超时 如果设置之后  达到时间自动回滚
+     */
+    int timeout() default TransactionDefinition.TIMEOUT_DEFAULT;
+
+
+    /**
+     * 设置是否只读 默认是false  如果设置之后会锁住库 如果有插入的话 会报异常 java.sql.SQLException: Connection is read-only. Queries leading to data modification are not allowed
+     */
+    boolean readOnly() default false;
+
+    /**
+     * 回滚的异常 默认只能是回滚runtimeExceptional
+     如果想全部回滚需要加上 rollback=exceptional.class
+     * CheckedException不回滚：
+     * Java认为Checked异常都是可以被处理的异常，所以Java程序必须显式的处理Checked异常，如果程序没有处理checked异常，程序在编译时候将发生错误。
+     * 我们比较熟悉的Checked异常有
+     * Java.lang.ClassNotFoundException
+     * Java.lang.NoSuchMetodException
+     * java.io.IOException
+     * &lt;p&gt;
+     * RunTimeException 回滚：
+     * Runtime如除数是0和数组下标越界等，其产生频繁，处理麻烦，若显示申明或者捕获将会对程序的可读性和运行效率影响很大。所以由系统自动检测并将它们交给缺省的异常处理程序。当然如果你有处理要求也可以显示捕获它们。
+     * 我们比较熟悉的RumtimeException类的子类有
+     * Java.lang.ArithmeticException
+     * Java.lang.ArrayStoreExcetpion
+     * Java.lang.ClassCastException
+     * Java.lang.IndexOutOfBoundsException
+     * Java.lang.NullPointerException
+     *
+     * @Transactional(rollbackFor=RuntimeException.class)
+     * 指定多个异常类：@Transactional(rollbackFor={RuntimeException.class, Exception.class})
+     */
+    Class&lt;? extends Throwable&gt;[] rollbackFor() default {};
+
+
+
+    /**
+     * 这个是支持输入的类名称 详细功能同上
+     * @Transactional(rollbackForClassName="RuntimeException")
+     * 指定多个异常类名称：@Transactional(rollbackForClassName={"RuntimeException","Exception"})
+     */
+    String[] rollbackForClassName() default {};
+
+
+    /**
+
+     * 不会滚的异常可以在这设置 ，也可以自己实现异常 但是必须要继承runtimeExceptional
+     */
+    Class&lt;? extends Throwable&gt;[] noRollbackFor() default {};
+
+
+    /**
+     *  同上 这个是支持输入的类名称  不会滚的异常可以在这设置 ，也可以自己实现异常 但是必须要继承runtimeExceptional
+     */
+    String[] noRollbackForClassName() default {};
+
+}
+
+
+</code></pre>
+    <h3 style="line-height: 160%; box-sizing: content-box; font-weight: 700; font-size: 27px; color: #333;">2.事务使用</h3>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">(1). 一个方法中涉及两次及以上重要插入，用事务来保证完整性
+        原子性<br/>
+        (2). 事务只能用在public 方法上 ，其他方法不起作用<br/>
+        (3). 可以放在ServiceImpl类上。全局实现事务<br/>
+        下面举一个简单的例子：</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;">@Override
+@Transactional(rollbackFor = Exception.class)
+public int insert(DneWechat record) {
+
+    record.setId(1);
+    record.setName("hj12334");
+    updateByPrimaryKey(record);
+    dneWechatMapper.insert(record);
+
+    insertMemberStudent();
+    return 1;
+}
+
+ //该方法是被第二次调用的方法 如果抛出异常 则全部回滚
+ //该方法可以不用写@transectional 因为事务是可以继承的
+@Transactional(rollbackFor = Exception.class)
+public void insertMemberStudent() {
+    DneMemberStudent dneMemberStudent = DneMemberStudent.builder()
+            .receivedTime(new Date())
+            .expireTime(new Date())
+            .userId(123)
+            .build();
+    dneMemberStudentService.insert(dneMemberStudent);
+    throw new RuntimeException();
+}
+</code></pre>
+    <h3 style="line-height: 160%; box-sizing: content-box; font-weight: 700; font-size: 27px; color: #333;">
+        3.事务失效的几种场景</h3>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">一、try
+        catch之后没有抛出对应的异常，这样是不会回滚的，错误例子如下：</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;">@Override
+    @Transactional(rollbackFor = Exception.class)
+    public int insert(DneWechat record) {
+
+        record.setId(1);
+        record.setName("hj12334");
+        updateByPrimaryKey(record);
+        dneWechatMapper.insert(record);
+
+        insertMemberStudent();
+        return 1;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void insertMemberStudent() {
+        DneMemberStudent dneMemberStudent = DneMemberStudent.builder()
+                .receivedTime(new Date())
+                .expireTime(new Date())
+                .userId(123)
+                .build();
+        dneMemberStudentService.insert(dneMemberStudent);
+        try {
+
+            int a = 1 / 0;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+</code></pre>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">二、 private 方法 不会回滚，错误例子如下：</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;"> @Override
+    @Transactional
+    public int insert(DneWechat record) throws IOException {
+
+        record.setId(1);
+        record.setName("hj12334");
+        updateByPrimaryKey(record);
+        dneWechatMapper.insert(record);
+
+        insertMemberStudent();
+
+        return 1;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    private void insertMemberStudent() {
+        DneMemberStudent dneMemberStudent = DneMemberStudent.builder()
+                .receivedTime(new Date())
+                .expireTime(new Date())
+                .userId(123)
+                .build();
+        dneMemberStudentService.insert(dneMemberStudent);
+    }
+</code></pre>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">三、 检查异常 例如ioexception
+        不会回滚，例子如下：</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;"> @Override
+    @Transactional
+    public int insert(DneWechat record) throws IOException {
+
+        record.setId(1);
+        record.setName("hj12334");
+        updateByPrimaryKey(record);
+        dneWechatMapper.insert(record);
+
+        insertMemberStudent();
+            throw new IOException();
+
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void insertMemberStudent() {
+        DneMemberStudent dneMemberStudent = DneMemberStudent.builder()
+                .receivedTime(new Date())
+                .expireTime(new Date())
+                .userId(123)
+                .build();
+        dneMemberStudentService.insert(dneMemberStudent);
+    }
+
+</code></pre>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">四、 被调用的方法有注解，Override
+        方法没有注解，不会回滚，因为注解注入是通过aop实现的，例子如下：</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;">@Override
+    public int insert(DneWechat record) {
+
+        record.setId(1);
+        record.setName("hj12334");
+        updateByPrimaryKey(record);
+        dneWechatMapper.insert(record);
+
+        insertMemberStudent();
+        return 1;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void insertMemberStudent() {
+        DneMemberStudent dneMemberStudent = DneMemberStudent.builder()
+                .receivedTime(new Date())
+                .expireTime(new Date())
+                .userId(123)
+                .build();
+        dneMemberStudentService.insert(dneMemberStudent);
+        throw new RuntimeException();
+    }
+</code></pre>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">我等采石之人，当心怀大教堂之愿景！<br/>
+        欢迎关注我的公众号！！<br/>
+        <img src="img/qrcode_for_gh_d2fa89a0f34a_258.jpg"
+             height="258" width="258"/></p>
+</div>
+<center style="display:none !important;visibility:collapse !important;height:0 !important;white-space:nowrap;width:100%;overflow:hidden">
+    !%5B32e46d4643f4c183faa330067b073f88.png%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp43)%0A%0A%E5%89%8D%E8%A8%80%EF%BC%9A%0A%20%E4%BA%8B%E5%8A%A1%E5%9B%9E%E6%BB%9A%E6%88%91%E4%BB%AC%E6%80%BB%E6%98%AF%E5%9C%A8%E7%94%A8%E5%88%B0%EF%BC%8C%E4%BD%86%E6%98%AF%E6%9C%89%E5%8F%AF%E8%83%BD%E4%B8%8D%E5%A4%AA%E4%BA%86%E8%A7%A3%E5%85%B7%E4%BD%93%E7%9A%84%E7%BB%86%E8%8A%82%EF%BC%8C%E6%8E%A5%E4%B8%8B%E6%9D%A5%E6%88%91%E4%BC%9A%E9%80%9A%E8%BF%87%E6%BA%90%E7%A0%81%E8%A7%A3%E8%AF%BB%E4%BB%A5%E5%8F%8A%E7%9C%9F%E5%AE%9E%E7%9A%84%E6%A1%88%E4%BE%8B%E6%B5%8B%E8%AF%95%EF%BC%8C%E6%9D%A5%E8%AF%B4%E6%98%8E%E3%80%82%0A%20%E6%8E%A5%E4%B8%8B%E6%9D%A5%E6%88%91%E4%BC%9A%E4%BB%8E%E4%B8%89%E6%96%B9%E9%9D%A2%E6%9D%A5%E8%AE%B2%E8%BF%B0%E4%BA%8B%E5%8A%A1%E7%9A%84%E8%BF%90%E7%94%A8%EF%BC%9A%0A%201.%20%E6%BA%90%E7%A0%81%E8%A7%A3%E8%AF%BB%0A%202.%20%E4%BA%8B%E5%8A%A1%E4%BD%BF%E7%94%A8%0A%203.%20%E4%BA%8B%E5%8A%A1%E7%9A%84%E5%A4%B1%E6%95%88%E5%9C%BA%E6%99%AF%0A%23%23%23%201.%E6%BA%90%E7%A0%81%E8%A7%A3%E8%AF%BB%0A%60%60%60%0A%0A%2F**%0A%20%E6%8F%8F%E8%BF%B0%E4%BA%8B%E5%8A%A1%E7%9A%84%E5%B1%9E%E6%80%A7%E5%9C%A8%E4%B8%80%E4%B8%AA%E6%96%B9%E6%B3%95%E6%88%96%E8%80%85%E7%B1%BB%E4%B8%8A%EF%BC%88%E4%B8%AA%E4%BA%BA%E8%A7%89%E5%BE%97%E5%BA%94%E8%AF%A5%E6%98%AF%E4%BD%BF%E7%94%A8%E4%BA%8B%E5%8A%A1%E7%9A%84%E5%B1%9E%E6%80%A7%E5%9C%A8%E6%96%B9%E6%B3%95%E6%88%96%E8%80%85%E7%B1%BB%E4%B8%8A%EF%BC%89%0A%20*%3Cp%3E%0A%20%20%E8%BF%99%E7%A7%8D%E6%B3%A8%E9%87%8A%E7%B1%BB%E5%9E%8B%E9%80%9A%E5%B8%B8%E5%8F%AF%E4%BB%A5%E7%9B%B4%E6%8E%A5%E4%B8%8ESpring%E7%9A%84%E6%B3%A8%E9%87%8A%E7%B1%BB%E5%9E%8B%E8%BF%9B%E8%A1%8C%E6%AF%94%E8%BE%83%EF%BC%8C%0A%20%E5%AE%9E%E9%99%85%E4%B8%8A%E5%B0%86%E7%9B%B4%E6%8E%A5%E5%B0%86%E6%95%B0%E6%8D%AE%E8%BD%AC%E6%8D%A2%E4%B8%BA%E5%90%8E%E8%80%85%EF%BC%8C%E5%9B%A0%E6%AD%A4Spring%E7%9A%84%E4%BA%8B%E5%8A%A1%E6%94%AF%E6%8C%81%E4%BB%A3%E7%A0%81%E4%B8%8D%E5%BF%85%E7%9F%A5%E9%81%93%E6%B3%A8%E9%87%8A%E3%80%82%20%E5%A6%82%E6%9E%9C%E6%B2%A1%E6%9C%89%E8%A7%84%E5%88%99%E4%B8%8E%E5%BC%82%E5%B8%B8%E7%9B%B8%E5%85%B3%EF%BC%8C%E5%88%99%E5%B0%86%E5%85%B6%E8%A7%86%E4%B8%BA%E5%9B%9E%E6%BB%9A%E8%BF%90%E8%A1%8C%E6%97%B6%E5%BC%82%E5%B8%B8%0A%20*%2F%0A%0A%40Target(%7BElementType.METHOD%2C%20ElementType.TYPE%7D)%0A%40Retention(RetentionPolicy.RUNTIME)%0A%40Inherited%0A%40Documented%0Apublic%20%40interface%20Transactional%20%7B%0A%0A%20%20%20%20%2F**%0A%20%20%20%20%20*%20%E4%B8%BB%E8%A6%81%E6%98%AFspring%E4%B8%8D%E6%8F%90%E4%BE%9B%E4%BA%8B%E5%8A%A1%E7%AE%A1%E7%90%86%E5%99%A8%EF%BC%8C%E5%8F%AF%E4%BB%A5%E9%80%9A%E8%BF%87%E8%BF%99%E4%B8%AA%E5%8E%BB%E5%AE%9A%E4%B9%89%E8%87%AA%E5%B7%B1%E6%83%B3%E8%A6%81%E7%9A%84%E4%BA%8B%E5%8A%A1%E7%AE%A1%E7%90%86%E5%99%A8%EF%BC%8C%E4%BE%8B%E5%A6%82hibernate%E7%9A%84%E3%80%81JTA%E7%9A%84%E3%80%81JDBC%E7%9A%84%0A%20%20%20%20%20*%20%E5%A4%A7%E8%87%B4%E4%B8%8A%E6%9C%89%E4%BB%A5%E4%B8%8B%E5%87%A0%E7%A7%8D%0A%20%20%20%20%20*%20org.springframework.jdbc.datasource.DataSourceTransactionManager%20%20DBC%E5%8F%8AiBATIS%E3%80%81MyBatis%E6%A1%86%E6%9E%B6%E4%BA%8B%E5%8A%A1%E7%AE%A1%E7%90%86%E5%99%A8%0A%20%20%20%20%20*%20org.springframework.orm.jdo.JdoTransactionManager%20Jdo%E4%BA%8B%E5%8A%A1%E7%AE%A1%E7%90%86%E5%99%A8%0A%20%20%20%20%20*%20org.springframework.orm.jpa.JpaTransactionManager%20Jpa%E4%BA%8B%E5%8A%A1%E7%AE%A1%E7%90%86%E5%99%A8%0A%20%20%20%20%20*%20org.springframework.orm.hibernate3.HibernateTransactionManager%20%20hibernate%E4%BA%8B%E5%8A%A1%E7%AE%A1%E7%90%86%E5%99%A8%0A%20%20%20%20%20*%20org.springframework.transaction.jta.JtaTransactionManager%20Jta%E4%BA%8B%E5%8A%A1%E7%AE%A1%E7%90%86%E5%99%A8%0A%20%20%20%20%20*%2F%0A%20%20%20%20String%20value()%20default%20%22%22%3B%0A%0A%0A%20%20%20%20%2F**%0A%20%20%20%20%20*%20*%20%E4%BA%8B%E5%8A%A1%E4%BC%A0%E6%92%AD%E7%B1%BB%E5%9E%8B%20%E9%BB%98%E8%AE%A4%E6%98%AFrequired%20%E5%85%B7%E4%BD%93%E8%A7%A3%E9%87%8A%E5%A6%82%E4%B8%8B%EF%BC%9A%0A%20%20%20%20%20*%20%40Transactional(propagation%3DPropagation.REQUIRED)%20%EF%BC%9A%E5%A6%82%E6%9E%9C%E6%9C%89%E4%BA%8B%E5%8A%A1%2C%20%E9%82%A3%E4%B9%88%E5%8A%A0%E5%85%A5%E4%BA%8B%E5%8A%A1%2C%20%E6%B2%A1%E6%9C%89%E7%9A%84%E8%AF%9D%E6%96%B0%E5%BB%BA%E4%B8%80%E4%B8%AA(%E9%BB%98%E8%AE%A4%E6%83%85%E5%86%B5%E4%B8%8B)%0A%20%20%20%20%20*%20%40Transactional(propagation%3DPropagation.NOT_SUPPORTED)%20%EF%BC%9A%E5%AE%B9%E5%99%A8%E4%B8%8D%E4%B8%BA%E8%BF%99%E4%B8%AA%E6%96%B9%E6%B3%95%E5%BC%80%E5%90%AF%E4%BA%8B%E5%8A%A1%0A%20%20%20%20%20*%20%40Transactional(propagation%3DPropagation.REQUIRES_NEW)%20%EF%BC%9A%E4%B8%8D%E7%AE%A1%E6%98%AF%E5%90%A6%E5%AD%98%E5%9C%A8%E4%BA%8B%E5%8A%A1%2C%E9%83%BD%E5%88%9B%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%96%B0%E7%9A%84%E4%BA%8B%E5%8A%A1%2C%E5%8E%9F%E6%9D%A5%E7%9A%84%E6%8C%82%E8%B5%B7%2C%E6%96%B0%E7%9A%84%E6%89%A7%E8%A1%8C%E5%AE%8C%E6%AF%95%2C%E7%BB%A7%E7%BB%AD%E6%89%A7%E8%A1%8C%E8%80%81%E7%9A%84%E4%BA%8B%E5%8A%A1%0A%20%20%20%20%20*%20%40Transactional(propagation%3DPropagation.MANDATORY)%20%EF%BC%9A%E5%BF%85%E9%A1%BB%E5%9C%A8%E4%B8%80%E4%B8%AA%E5%B7%B2%E6%9C%89%E7%9A%84%E4%BA%8B%E5%8A%A1%E4%B8%AD%E6%89%A7%E8%A1%8C%2C%E5%90%A6%E5%88%99%E6%8A%9B%E5%87%BA%E5%BC%82%E5%B8%B8%0A%20%20%20%20%20*%20%40Transactional(propagation%3DPropagation.NEVER)%20%EF%BC%9A%E5%BF%85%E9%A1%BB%E5%9C%A8%E4%B8%80%E4%B8%AA%E6%B2%A1%E6%9C%89%E7%9A%84%E4%BA%8B%E5%8A%A1%E4%B8%AD%E6%89%A7%E8%A1%8C%2C%E5%90%A6%E5%88%99%E6%8A%9B%E5%87%BA%E5%BC%82%E5%B8%B8(%E4%B8%8EPropagation.MANDATORY%E7%9B%B8%E5%8F%8D)%0A%20%20%20%20%20*%20%40Transactional(propagation%3DPropagation.SUPPORTS)%20%EF%BC%9A%E5%A6%82%E6%9E%9C%E5%85%B6%E4%BB%96bean%E8%B0%83%E7%94%A8%E8%BF%99%E4%B8%AA%E6%96%B9%E6%B3%95%2C%E5%9C%A8%E5%85%B6%E4%BB%96bean%E4%B8%AD%E5%A3%B0%E6%98%8E%E4%BA%8B%E5%8A%A1%2C%E9%82%A3%E5%B0%B1%E7%94%A8%E4%BA%8B%E5%8A%A1.%E5%A6%82%E6%9E%9C%E5%85%B6%E4%BB%96bean%E6%B2%A1%E6%9C%89%E5%A3%B0%E6%98%8E%E4%BA%8B%E5%8A%A1%2C%E9%82%A3%E5%B0%B1%E4%B8%8D%E7%94%A8%E4%BA%8B%E5%8A%A1.%0A%20%20%20%20%20*%20%3Cp%3E%0A%20%20%20%20%20*%2F%0A%20%20%20%20Propagation%20propagation()%20default%20Propagation.REQUIRED%3B%0A%20%20%20%20%0A%20%20%20%20%0A%20%20%20%20%2F**%0A%20%20%20%20%20*%20%E4%BA%8B%E5%8A%A1%E7%9A%84%E9%9A%94%E7%A6%BB%E6%9C%BA%E5%88%B6%20%E9%BB%98%E8%AE%A4%E6%98%AF%E6%95%B0%E6%8D%AE%E5%BA%93%E7%9A%84%E9%9A%94%E7%A6%BB%E6%9C%BA%E5%88%B6%20%E9%9C%80%E8%A6%81%E6%98%AFinnodb%E5%BC%95%E6%93%8E%E6%95%B0%E6%8D%AE%E5%BA%93%E6%89%8D%E5%8F%AF%E4%BB%A5%0A%20%20%20%20%20*%20READ_UNCOMMITTED(TransactionDefinition.ISOLATION_READ_UNCOMMITTED)%2C%20%20%09%E8%AF%BB%E5%8F%96%E6%9C%AA%E6%8F%90%E4%BA%A4%E6%95%B0%E6%8D%AE(%E4%BC%9A%E5%87%BA%E7%8E%B0%E8%84%8F%E8%AF%BB%2C%20%E4%B8%8D%E5%8F%AF%E9%87%8D%E5%A4%8D%E8%AF%BB)%20%E5%9F%BA%E6%9C%AC%E4%B8%8D%E4%BD%BF%E7%94%A8%0A%20%20%20%20%20*%20READ_COMMITTED(TransactionDefinition.ISOLATION_READ_COMMITTED)%2C%20%E8%AF%BB%E5%8F%96%E5%B7%B2%E6%8F%90%E4%BA%A4%E6%95%B0%E6%8D%AE(%E4%BC%9A%E5%87%BA%E7%8E%B0%E4%B8%8D%E5%8F%AF%E9%87%8D%E5%A4%8D%E8%AF%BB%E5%92%8C%E5%B9%BB%E8%AF%BB)%0A%20%20%20%20%20*%20REPEATABLE_READ(TransactionDefinition.ISOLATION_REPEATABLE_READ)%2C%20%E5%8F%AF%E9%87%8D%E5%A4%8D%E8%AF%BB(%E4%BC%9A%E5%87%BA%E7%8E%B0%E5%B9%BB%E8%AF%BB)%0A%20%20%20%20%20*%20SERIALIZABLE(TransactionDefinition.ISOLATION_SERIALIZABLE)%3B%20%E4%B8%B2%E8%A1%8C%E5%8C%96%0A%20%20%20%20%20*%2F%0A%20%20%20%20Isolation%20isolation()%20default%20Isolation.DEFAULT%3B%0A%0A%0A%20%20%20%20%2F*%20%20%20%0A%20%20%20%20%20*%20%E4%BA%8B%E5%8A%A1%E8%B6%85%E6%97%B6%E6%97%B6%E9%97%B4%20%E9%BB%98%E8%AE%A4-1%20%E6%B0%B8%E8%BF%9C%E4%B8%8D%E8%B6%85%E6%97%B6%20%E5%A6%82%E6%9E%9C%E8%AE%BE%E7%BD%AE%E4%B9%8B%E5%90%8E%20%20%E8%BE%BE%E5%88%B0%E6%97%B6%E9%97%B4%E8%87%AA%E5%8A%A8%E5%9B%9E%E6%BB%9A%0A%20%20%20%20%20*%2F%0A%20%20%20%20int%20timeout()%20default%20TransactionDefinition.TIMEOUT_DEFAULT%3B%0A%0A%0A%20%20%20%20%2F**%0A%20%20%20%20%20*%20%E8%AE%BE%E7%BD%AE%E6%98%AF%E5%90%A6%E5%8F%AA%E8%AF%BB%20%E9%BB%98%E8%AE%A4%E6%98%AFfalse%20%20%E5%A6%82%E6%9E%9C%E8%AE%BE%E7%BD%AE%E4%B9%8B%E5%90%8E%E4%BC%9A%E9%94%81%E4%BD%8F%E5%BA%93%20%E5%A6%82%E6%9E%9C%E6%9C%89%E6%8F%92%E5%85%A5%E7%9A%84%E8%AF%9D%20%E4%BC%9A%E6%8A%A5%E5%BC%82%E5%B8%B8%20java.sql.SQLException%3A%20Connection%20is%20read-only.%20Queries%20leading%20to%20data%20modification%20are%20not%20allowed%0A%20%20%20%20%20*%2F%0A%20%20%20%20boolean%20readOnly()%20default%20false%3B%0A%0A%20%20%20%20%2F**%0A%20%20%20%20%20*%20%E5%9B%9E%E6%BB%9A%E7%9A%84%E5%BC%82%E5%B8%B8%20%E9%BB%98%E8%AE%A4%E5%8F%AA%E8%83%BD%E6%98%AF%E5%9B%9E%E6%BB%9AruntimeExceptional%0A%20%20%20%20%20%E5%A6%82%E6%9E%9C%E6%83%B3%E5%85%A8%E9%83%A8%E5%9B%9E%E6%BB%9A%E9%9C%80%E8%A6%81%E5%8A%A0%E4%B8%8A%20rollback%3Dexceptional.class%0A%20%20%20%20%20*%20CheckedException%E4%B8%8D%E5%9B%9E%E6%BB%9A%EF%BC%9A%0A%20%20%20%20%20*%20Java%E8%AE%A4%E4%B8%BAChecked%E5%BC%82%E5%B8%B8%E9%83%BD%E6%98%AF%E5%8F%AF%E4%BB%A5%E8%A2%AB%E5%A4%84%E7%90%86%E7%9A%84%E5%BC%82%E5%B8%B8%EF%BC%8C%E6%89%80%E4%BB%A5Java%E7%A8%8B%E5%BA%8F%E5%BF%85%E9%A1%BB%E6%98%BE%E5%BC%8F%E7%9A%84%E5%A4%84%E7%90%86Checked%E5%BC%82%E5%B8%B8%EF%BC%8C%E5%A6%82%E6%9E%9C%E7%A8%8B%E5%BA%8F%E6%B2%A1%E6%9C%89%E5%A4%84%E7%90%86checked%E5%BC%82%E5%B8%B8%EF%BC%8C%E7%A8%8B%E5%BA%8F%E5%9C%A8%E7%BC%96%E8%AF%91%E6%97%B6%E5%80%99%E5%B0%86%E5%8F%91%E7%94%9F%E9%94%99%E8%AF%AF%E3%80%82%0A%20%20%20%20%20*%20%E6%88%91%E4%BB%AC%E6%AF%94%E8%BE%83%E7%86%9F%E6%82%89%E7%9A%84Checked%E5%BC%82%E5%B8%B8%E6%9C%89%0A%20%20%20%20%20*%20Java.lang.ClassNotFoundException%0A%20%20%20%20%20*%20Java.lang.NoSuchMetodException%0A%20%20%20%20%20*%20java.io.IOException%0A%20%20%20%20%20*%20%3Cp%3E%0A%20%20%20%20%20*%20RunTimeException%20%E5%9B%9E%E6%BB%9A%EF%BC%9A%0A%20%20%20%20%20*%20Runtime%E5%A6%82%E9%99%A4%E6%95%B0%E6%98%AF0%E5%92%8C%E6%95%B0%E7%BB%84%E4%B8%8B%E6%A0%87%E8%B6%8A%E7%95%8C%E7%AD%89%EF%BC%8C%E5%85%B6%E4%BA%A7%E7%94%9F%E9%A2%91%E7%B9%81%EF%BC%8C%E5%A4%84%E7%90%86%E9%BA%BB%E7%83%A6%EF%BC%8C%E8%8B%A5%E6%98%BE%E7%A4%BA%E7%94%B3%E6%98%8E%E6%88%96%E8%80%85%E6%8D%95%E8%8E%B7%E5%B0%86%E4%BC%9A%E5%AF%B9%E7%A8%8B%E5%BA%8F%E7%9A%84%E5%8F%AF%E8%AF%BB%E6%80%A7%E5%92%8C%E8%BF%90%E8%A1%8C%E6%95%88%E7%8E%87%E5%BD%B1%E5%93%8D%E5%BE%88%E5%A4%A7%E3%80%82%E6%89%80%E4%BB%A5%E7%94%B1%E7%B3%BB%E7%BB%9F%E8%87%AA%E5%8A%A8%E6%A3%80%E6%B5%8B%E5%B9%B6%E5%B0%86%E5%AE%83%E4%BB%AC%E4%BA%A4%E7%BB%99%E7%BC%BA%E7%9C%81%E7%9A%84%E5%BC%82%E5%B8%B8%E5%A4%84%E7%90%86%E7%A8%8B%E5%BA%8F%E3%80%82%E5%BD%93%E7%84%B6%E5%A6%82%E6%9E%9C%E4%BD%A0%E6%9C%89%E5%A4%84%E7%90%86%E8%A6%81%E6%B1%82%E4%B9%9F%E5%8F%AF%E4%BB%A5%E6%98%BE%E7%A4%BA%E6%8D%95%E8%8E%B7%E5%AE%83%E4%BB%AC%E3%80%82%0A%20%20%20%20%20*%20%E6%88%91%E4%BB%AC%E6%AF%94%E8%BE%83%E7%86%9F%E6%82%89%E7%9A%84RumtimeException%E7%B1%BB%E7%9A%84%E5%AD%90%E7%B1%BB%E6%9C%89%0A%20%20%20%20%20*%20Java.lang.ArithmeticException%0A%20%20%20%20%20*%20Java.lang.ArrayStoreExcetpion%0A%20%20%20%20%20*%20Java.lang.ClassCastException%0A%20%20%20%20%20*%20Java.lang.IndexOutOfBoundsException%0A%20%20%20%20%20*%20Java.lang.NullPointerException%0A%20%20%20%20%20*%0A%20%20%20%20%20*%20%40Transactional(rollbackFor%3DRuntimeException.class)%0A%20%20%20%20%20*%20%E6%8C%87%E5%AE%9A%E5%A4%9A%E4%B8%AA%E5%BC%82%E5%B8%B8%E7%B1%BB%EF%BC%9A%40Transactional(rollbackFor%3D%7BRuntimeException.class%2C%20Exception.class%7D)%0A%20%20%20%20%20*%2F%0A%20%20%20%20Class%3C%3F%20extends%20Throwable%3E%5B%5D%20rollbackFor()%20default%20%7B%7D%3B%0A%0A%0A%0A%20%20%20%20%2F**%0A%20%20%20%20%20*%20%E8%BF%99%E4%B8%AA%E6%98%AF%E6%94%AF%E6%8C%81%E8%BE%93%E5%85%A5%E7%9A%84%E7%B1%BB%E5%90%8D%E7%A7%B0%20%E8%AF%A6%E7%BB%86%E5%8A%9F%E8%83%BD%E5%90%8C%E4%B8%8A%0A%20%20%20%20%20*%20%40Transactional(rollbackForClassName%3D%22RuntimeException%22)%0A%20%20%20%20%20*%20%E6%8C%87%E5%AE%9A%E5%A4%9A%E4%B8%AA%E5%BC%82%E5%B8%B8%E7%B1%BB%E5%90%8D%E7%A7%B0%EF%BC%9A%40Transactional(rollbackForClassName%3D%7B%22RuntimeException%22%2C%22Exception%22%7D)%0A%20%20%20%20%20*%2F%0A%20%20%20%20String%5B%5D%20rollbackForClassName()%20default%20%7B%7D%3B%0A%0A%0A%20%20%20%20%2F**%0A%20%20%20%20%20%0A%20%20%20%20%20*%20%E4%B8%8D%E4%BC%9A%E6%BB%9A%E7%9A%84%E5%BC%82%E5%B8%B8%E5%8F%AF%E4%BB%A5%E5%9C%A8%E8%BF%99%E8%AE%BE%E7%BD%AE%20%EF%BC%8C%E4%B9%9F%E5%8F%AF%E4%BB%A5%E8%87%AA%E5%B7%B1%E5%AE%9E%E7%8E%B0%E5%BC%82%E5%B8%B8%20%E4%BD%86%E6%98%AF%E5%BF%85%E9%A1%BB%E8%A6%81%E7%BB%A7%E6%89%BFruntimeExceptional%0A%20%20%20%20%20*%2F%0A%20%20%20%20Class%3C%3F%20extends%20Throwable%3E%5B%5D%20noRollbackFor()%20default%20%7B%7D%3B%0A%0A%0A%20%20%20%20%2F**%0A%20%20%20%20%20*%20%20%E5%90%8C%E4%B8%8A%20%E8%BF%99%E4%B8%AA%E6%98%AF%E6%94%AF%E6%8C%81%E8%BE%93%E5%85%A5%E7%9A%84%E7%B1%BB%E5%90%8D%E7%A7%B0%20%20%E4%B8%8D%E4%BC%9A%E6%BB%9A%E7%9A%84%E5%BC%82%E5%B8%B8%E5%8F%AF%E4%BB%A5%E5%9C%A8%E8%BF%99%E8%AE%BE%E7%BD%AE%20%EF%BC%8C%E4%B9%9F%E5%8F%AF%E4%BB%A5%E8%87%AA%E5%B7%B1%E5%AE%9E%E7%8E%B0%E5%BC%82%E5%B8%B8%20%E4%BD%86%E6%98%AF%E5%BF%85%E9%A1%BB%E8%A6%81%E7%BB%A7%E6%89%BFruntimeExceptional%0A%20%20%20%20%20*%2F%0A%20%20%20%20String%5B%5D%20noRollbackForClassName()%20default%20%7B%7D%3B%0A%0A%7D%0A%0A%0A%60%60%60%0A%0A%23%23%23%202.%E4%BA%8B%E5%8A%A1%E4%BD%BF%E7%94%A8%0A(1).%20%E4%B8%80%E4%B8%AA%E6%96%B9%E6%B3%95%E4%B8%AD%E6%B6%89%E5%8F%8A%E4%B8%A4%E6%AC%A1%E5%8F%8A%E4%BB%A5%E4%B8%8A%E9%87%8D%E8%A6%81%E6%8F%92%E5%85%A5%EF%BC%8C%E7%94%A8%E4%BA%8B%E5%8A%A1%E6%9D%A5%E4%BF%9D%E8%AF%81%E5%AE%8C%E6%95%B4%E6%80%A7%20%E5%8E%9F%E5%AD%90%E6%80%A7%0A(2).%20%E4%BA%8B%E5%8A%A1%E5%8F%AA%E8%83%BD%E7%94%A8%E5%9C%A8public%20%E6%96%B9%E6%B3%95%E4%B8%8A%20%EF%BC%8C%E5%85%B6%E4%BB%96%E6%96%B9%E6%B3%95%E4%B8%8D%E8%B5%B7%E4%BD%9C%E7%94%A8%0A(3).%20%E5%8F%AF%E4%BB%A5%E6%94%BE%E5%9C%A8ServiceImpl%E7%B1%BB%E4%B8%8A%E3%80%82%E5%85%A8%E5%B1%80%E5%AE%9E%E7%8E%B0%E4%BA%8B%E5%8A%A1%0A%E4%B8%8B%E9%9D%A2%E4%B8%BE%E4%B8%80%E4%B8%AA%E7%AE%80%E5%8D%95%E7%9A%84%E4%BE%8B%E5%AD%90%EF%BC%9A%0A%0A%20%20%20%20%20%20%20%0A%20%20%20%20%40Override%0A%20%20%20%20%40Transactional(rollbackFor%20%3D%20Exception.class)%0A%20%20%20%20public%20int%20insert(DneWechat%20record)%20%7B%0A%0A%20%20%20%20%20%20%20%20record.setId(1)%3B%0A%20%20%20%20%20%20%20%20record.setName(%22hj12334%22)%3B%0A%20%20%20%20%20%20%20%20updateByPrimaryKey(record)%3B%0A%20%20%20%20%20%20%20%20dneWechatMapper.insert(record)%3B%0A%0A%20%20%20%20%20%20%20%20insertMemberStudent()%3B%0A%20%20%20%20%20%20%20%20return%201%3B%0A%20%20%20%20%7D%0A%0A%20%20%20%20%20%2F%2F%E8%AF%A5%E6%96%B9%E6%B3%95%E6%98%AF%E8%A2%AB%E7%AC%AC%E4%BA%8C%E6%AC%A1%E8%B0%83%E7%94%A8%E7%9A%84%E6%96%B9%E6%B3%95%20%E5%A6%82%E6%9E%9C%E6%8A%9B%E5%87%BA%E5%BC%82%E5%B8%B8%20%E5%88%99%E5%85%A8%E9%83%A8%E5%9B%9E%E6%BB%9A%0A%20%20%20%20%20%2F%2F%E8%AF%A5%E6%96%B9%E6%B3%95%E5%8F%AF%E4%BB%A5%E4%B8%8D%E7%94%A8%E5%86%99%40transectional%20%E5%9B%A0%E4%B8%BA%E4%BA%8B%E5%8A%A1%E6%98%AF%E5%8F%AF%E4%BB%A5%E7%BB%A7%E6%89%BF%E7%9A%84%20%0A%20%20%20%20%40Transactional(rollbackFor%20%3D%20Exception.class)%0A%20%20%20%20public%20void%20insertMemberStudent()%20%7B%0A%20%20%20%20%20%20%20%20DneMemberStudent%20dneMemberStudent%20%3D%20DneMemberStudent.builder()%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.receivedTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.expireTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.userId(123)%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.build()%3B%0A%20%20%20%20%20%20%20%20dneMemberStudentService.insert(dneMemberStudent)%3B%0A%20%20%20%20%20%20%20%20throw%20new%20RuntimeException()%3B%0A%20%20%20%20%7D%0A%0A%0A%23%23%23%203.%E4%BA%8B%E5%8A%A1%E5%A4%B1%E6%95%88%E7%9A%84%E5%87%A0%E7%A7%8D%E5%9C%BA%E6%99%AF%0A%20%E4%B8%80%E3%80%81try%20catch%E4%B9%8B%E5%90%8E%E6%B2%A1%E6%9C%89%E6%8A%9B%E5%87%BA%E5%AF%B9%E5%BA%94%E7%9A%84%E5%BC%82%E5%B8%B8%EF%BC%8C%E8%BF%99%E6%A0%B7%E6%98%AF%E4%B8%8D%E4%BC%9A%E5%9B%9E%E6%BB%9A%E7%9A%84%EF%BC%8C%E9%94%99%E8%AF%AF%E4%BE%8B%E5%AD%90%E5%A6%82%E4%B8%8B%EF%BC%9A%0A%20%0A%20%0A%60%60%60%0A%40Override%0A%20%20%20%20%40Transactional(rollbackFor%20%3D%20Exception.class)%0A%20%20%20%20public%20int%20insert(DneWechat%20record)%20%7B%0A%0A%20%20%20%20%20%20%20%20record.setId(1)%3B%0A%20%20%20%20%20%20%20%20record.setName(%22hj12334%22)%3B%0A%20%20%20%20%20%20%20%20updateByPrimaryKey(record)%3B%0A%20%20%20%20%20%20%20%20dneWechatMapper.insert(record)%3B%0A%0A%20%20%20%20%20%20%20%20insertMemberStudent()%3B%0A%20%20%20%20%20%20%20%20return%201%3B%0A%20%20%20%20%7D%0A%0A%20%20%20%20%40Transactional(rollbackFor%20%3D%20Exception.class)%0A%20%20%20%20public%20void%20insertMemberStudent()%20%7B%0A%20%20%20%20%20%20%20%20DneMemberStudent%20dneMemberStudent%20%3D%20DneMemberStudent.builder()%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.receivedTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.expireTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.userId(123)%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.build()%3B%0A%20%20%20%20%20%20%20%20dneMemberStudentService.insert(dneMemberStudent)%3B%0A%20%20%20%20%20%20%20%20try%20%7B%0A%0A%20%20%20%20%20%20%20%20%20%20%20%20int%20a%20%3D%201%20%2F%200%3B%0A%20%20%20%20%20%20%20%20%7D%20catch%20(Exception%20e)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20e.printStackTrace()%3B%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%60%60%60%0A%0A%E4%BA%8C%E3%80%81%20private%20%E6%96%B9%E6%B3%95%20%E4%B8%8D%E4%BC%9A%E5%9B%9E%E6%BB%9A%EF%BC%8C%E9%94%99%E8%AF%AF%E4%BE%8B%E5%AD%90%E5%A6%82%E4%B8%8B%EF%BC%9A%0A%0A%20%0A%60%60%60%0A%20%40Override%0A%20%20%20%20%40Transactional%0A%20%20%20%20public%20int%20insert(DneWechat%20record)%20throws%20IOException%20%7B%0A%0A%20%20%20%20%20%20%20%20record.setId(1)%3B%0A%20%20%20%20%20%20%20%20record.setName(%22hj12334%22)%3B%0A%20%20%20%20%20%20%20%20updateByPrimaryKey(record)%3B%0A%20%20%20%20%20%20%20%20dneWechatMapper.insert(record)%3B%0A%0A%20%20%20%20%20%20%20%20insertMemberStudent()%3B%0A%0A%20%20%20%20%20%20%20%20return%201%3B%0A%20%20%20%20%7D%0A%0A%20%20%20%20%40Transactional(rollbackFor%20%3D%20Exception.class)%0A%20%20%20%20private%20void%20insertMemberStudent()%20%7B%0A%20%20%20%20%20%20%20%20DneMemberStudent%20dneMemberStudent%20%3D%20DneMemberStudent.builder()%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.receivedTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.expireTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.userId(123)%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.build()%3B%0A%20%20%20%20%20%20%20%20dneMemberStudentService.insert(dneMemberStudent)%3B%0A%20%20%20%20%7D%0A%60%60%60%0A%0A%0A%E4%B8%89%E3%80%81%20%E6%A3%80%E6%9F%A5%E5%BC%82%E5%B8%B8%20%E4%BE%8B%E5%A6%82ioexception%20%E4%B8%8D%E4%BC%9A%E5%9B%9E%E6%BB%9A%EF%BC%8C%E4%BE%8B%E5%AD%90%E5%A6%82%E4%B8%8B%EF%BC%9A%0A%0A%60%60%60%0A%20%40Override%0A%20%20%20%20%40Transactional%0A%20%20%20%20public%20int%20insert(DneWechat%20record)%20throws%20IOException%20%7B%0A%0A%20%20%20%20%20%20%20%20record.setId(1)%3B%0A%20%20%20%20%20%20%20%20record.setName(%22hj12334%22)%3B%0A%20%20%20%20%20%20%20%20updateByPrimaryKey(record)%3B%0A%20%20%20%20%20%20%20%20dneWechatMapper.insert(record)%3B%0A%0A%20%20%20%20%20%20%20%20insertMemberStudent()%3B%0A%20%20%20%20%20%20%20%20%20%20%20%20throw%20new%20IOException()%3B%0A%0A%20%20%20%20%7D%0A%0A%20%20%20%20%40Transactional(rollbackFor%20%3D%20Exception.class)%0A%20%20%20%20public%20void%20insertMemberStudent()%20%7B%0A%20%20%20%20%20%20%20%20DneMemberStudent%20dneMemberStudent%20%3D%20DneMemberStudent.builder()%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.receivedTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.expireTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.userId(123)%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.build()%3B%0A%20%20%20%20%20%20%20%20dneMemberStudentService.insert(dneMemberStudent)%3B%0A%20%20%20%20%7D%0A%0A%60%60%60%0A%0A%E5%9B%9B%E3%80%81%20%E8%A2%AB%E8%B0%83%E7%94%A8%E7%9A%84%E6%96%B9%E6%B3%95%E6%9C%89%E6%B3%A8%E8%A7%A3%EF%BC%8COverride%20%E6%96%B9%E6%B3%95%E6%B2%A1%E6%9C%89%E6%B3%A8%E8%A7%A3%EF%BC%8C%E4%B8%8D%E4%BC%9A%E5%9B%9E%E6%BB%9A%EF%BC%8C%E5%9B%A0%E4%B8%BA%E6%B3%A8%E8%A7%A3%E6%B3%A8%E5%85%A5%E6%98%AF%E9%80%9A%E8%BF%87aop%E5%AE%9E%E7%8E%B0%E7%9A%84%EF%BC%8C%E4%BE%8B%E5%AD%90%E5%A6%82%E4%B8%8B%EF%BC%9A%0A%60%60%60%0A%40Override%0A%20%20%20%20public%20int%20insert(DneWechat%20record)%20%7B%0A%0A%20%20%20%20%20%20%20%20record.setId(1)%3B%0A%20%20%20%20%20%20%20%20record.setName(%22hj12334%22)%3B%0A%20%20%20%20%20%20%20%20updateByPrimaryKey(record)%3B%0A%20%20%20%20%20%20%20%20dneWechatMapper.insert(record)%3B%0A%0A%20%20%20%20%20%20%20%20insertMemberStudent()%3B%0A%20%20%20%20%20%20%20%20return%201%3B%0A%20%20%20%20%7D%0A%0A%20%20%20%20%40Transactional(rollbackFor%20%3D%20Exception.class)%0A%20%20%20%20public%20void%20insertMemberStudent()%20%7B%0A%20%20%20%20%20%20%20%20DneMemberStudent%20dneMemberStudent%20%3D%20DneMemberStudent.builder()%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.receivedTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.expireTime(new%20Date())%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.userId(123)%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20.build()%3B%0A%20%20%20%20%20%20%20%20dneMemberStudentService.insert(dneMemberStudent)%3B%0A%20%20%20%20%20%20%20%20throw%20new%20RuntimeException()%3B%0A%20%20%20%20%7D%0A%60%60%60%0A%0A%E6%88%91%E7%AD%89%E9%87%87%E7%9F%B3%E4%B9%8B%E4%BA%BA%EF%BC%8C%E5%BD%93%E5%BF%83%E6%80%80%E5%A4%A7%E6%95%99%E5%A0%82%E4%B9%8B%E6%84%BF%E6%99%AF%EF%BC%81%0A%E6%AC%A2%E8%BF%8E%E5%85%B3%E6%B3%A8%E6%88%91%E7%9A%84%E5%85%AC%E4%BC%97%E5%8F%B7%EF%BC%81%EF%BC%81%0A!%5B1459af53d33cc8704a8775b198eb3b72.jpeg%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp38)%0A
+</center>
+</body>
+</html>

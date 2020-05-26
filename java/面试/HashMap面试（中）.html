@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <meta name="exporter-version" content="Evernote Mac 9.3.3 (459822)"/>
+    <meta name="author" content="1162913927@qq.com"/>
+    <meta name="created" content="2020-04-10 10:57:17 +0000"/>
+    <meta name="source" content="desktop.mac"/>
+    <meta name="updated" content="2020-05-26 08:45:07 +0000"/>
+    <meta name="content-class" content="yinxiang.markdown"/>
+    <title>HashMap总结（中）</title></head>
+<body>
+<div style="font-size: 14px; margin: 0; padding: 0; width: 100%;"><p
+        style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+    上文提到了hashMap的原理，这章我们决定好好系统研究一下他的默认值以及hashcode的比较。（理解一个东西最好的办法就是阅读源码以及源码注释）<br/>
+    全文会主要讲解以下几个问题？<br/>
+    1.为什么默认值是16？<br/>
+    2.什么时候扩容？<br/>
+    3.为什么加载因子是0.75？</p>
+    <h5 style="line-height: 160%; box-sizing: content-box; font-weight: 700; font-size: 16px; color: #333;">
+        为什么默认值是16？什么时候扩容？</h5>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+        首先需要知道hashmap的底层数据结构，是数组加链表。既然这样就一定会发生hash碰撞（不了解的请看之前的文章）。其实个人觉得16就是为了均匀分布。使碰撞减少。同时通过阅读源码我们可以知道如何生成hash（java
+        1.8源码）</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;">static final int hash(Object key) {
+        int h;
+        return (key == null) ? 0 : (h = key.hashCode()) ^ (h &gt;&gt;&gt; 16);
+    }
+</code></pre>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;"><img
+            src="img/492D8B0C-4F20-49E4-8BA2-73914BE72A76.png"
+            height="554" width="1240"/></p>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+        以上就是一个生成hash的解释，相信大家也没有详细看过，在这里我给大家做一下解释。就是调用object本身的生成hashcode 和 h &gt;&gt;&gt;（无符号右移运算符）16位之后
+        取异或的值就是hash值。具体什么是异或、无符号右移。请自己自行百度谷歌吧。<br/>
+        <img src="img/5B97C1E4-824D-4CEC-B8C8-121031AA9091.png"
+             height="1356" width="1562"/></p>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+        这个图中就是hash与初始化的最大值减1，做与运算。然后确定存储的位置。有可能有人会问了。为什么是16？不是10、9、25、之类的呢？为什么要减1呢？<br/>
+        其实这里涉及到一个简单的逻辑，下面给大家看一下：</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;">十进制:&nbsp;&nbsp; 201314&nbsp;&nbsp;
+二进制:&nbsp;&nbsp;&nbsp;&nbsp;11 0001 0010 0110 0010
+假设初始化大小为16
+15转化为二进制: 1111
+index :&nbsp;&nbsp;11 0001 0010 0110 0010 &&nbsp;&nbsp;1111 =0010&nbsp;&nbsp; 为 3&nbsp;&nbsp;
+假设初始化大小为10
+10转化为二进制: 1010
+index:&nbsp;&nbsp;11 0001 0010 0110 0010 &&nbsp;&nbsp;1010=0010&nbsp;&nbsp; 为 3
+</code></pre>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">因为是将二进制进行按位于，(16-1)&nbsp;&nbsp;是
+        1111,末位是1，这样也能保证计算后的index既可以是奇数也可以是偶数，并且只要传进来的key足够分散，均匀那么按位于的时候获得的index就会减少重复，这样也就减少了hash的碰撞以及hashMap的查询效率。<br/>
+        那么到了这里你也许会问？ 那么就然16可以，是不是只要是2的整数次幂就可以呢？那为什么不是8,4呢？ 个人觉得因为是8或者4的话很容易导致map扩容影响性能，如果分配的太大的话又会浪费资源，所以就使用16作为初始大小。
+    </p>
+    <h5 style="line-height: 160%; box-sizing: content-box; font-weight: 700; font-size: 16px; color: #333;">
+        什么时候扩容呢？源码中给了答案：</h5>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;"><img
+            src="img/A9D85D48-CCC2-434F-BC70-25C761E5DD3E.png"
+            height="1420" width="1380"/></p>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+        达到你定义的初始化值的0.75倍时候就会扩容到原来的2倍。有的人又要问了为什么是2倍，不是0.5，1.5之类的呢？源码中给了一个方法：根据传过来的定义的map大小来进行或运算之后得到扩容之后的2倍。</p>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;"><img
+            src="img/A1BCA5B8-51EB-47A0-A7DA-0D7B9C415C80.png"
+            height="1054" width="1470"/></p>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">看了下源码注释如下：</p>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;"><img
+            src="img/48867500-5C40-4CBF-951B-22841BA49A72.png"
+            height="832" width="1258"/></p>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+        个人觉得2倍之后还是方便取值或者做与运算：下面也是源码中的取值的方法：<br/>
+        <img src="img/82688B79-DCC1-4F46-8156-8C5AFF12FA12.png"
+             height="846" width="1170"/></p>
+    <h5 style="line-height: 160%; box-sizing: content-box; font-weight: 700; font-size: 16px; color: #333;">
+        为什么是0.75？</h5>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">源码中给到了一些，简单来说就是为了减少开销？如果为0.5
+        时候扩容会极大浪费空间。0.8之类的应该是hash碰撞比较高，所以选择一个折中值。而且和默认16一同使用，则是一个完美的加载因子。</p>
+    <pre style="line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; margin: 2px 0 8px; background-color: #f5f7f8;"><code
+            style="display: block; overflow-x: auto; background: #1e1e1e; line-height: 160%; box-sizing: content-box; border: 0; border-radius: 0; letter-spacing: -.3px; padding: 18px; color: #f4f4f4; white-space: pre-wrap;">&lt;p&gt;As a general rule, the default load factor (.75) offers a good
+ * tradeoff between time and space costs.  Higher values decrease the
+ * space overhead but increase the lookup cost (reflected in most of
+ * the operations of the &lt;tt&gt;HashMap&lt;/tt&gt; class, including
+ * &lt;tt&gt;get&lt;/tt&gt; and &lt;tt&gt;put&lt;/tt&gt;).  The expected number of entries in
+ * the map and its load factor should be taken into account when
+ * setting its initial capacity, so as to minimize the number of
+ * rehash operations.  If the initial capacity is greater than the
+ * maximum number of entries divided by the load factor, no rehash
+ * operations will ever occur.
+</code></pre>
+    <p style="line-height: 160%; box-sizing: content-box; margin: 10px 0; color: #333;">
+        我等采石之人，当心怀大教堂之愿景！欢迎关注我的公众号！！<br/>
+        <img src="HashMap%E6%80%BB%E7%BB%93%EF%BC%88%E4%B8%AD%EF%BC%89.resources/qrcode_for_gh_d2fa89a0f34a_258.jpg"
+             height="258" width="258"/></p>
+</div>
+<center style="display:none !important;visibility:collapse !important;height:0 !important;white-space:nowrap;width:100%;overflow:hidden">
+    %E4%B8%8A%E6%96%87%E6%8F%90%E5%88%B0%E4%BA%86hashMap%E7%9A%84%E5%8E%9F%E7%90%86%EF%BC%8C%E8%BF%99%E7%AB%A0%E6%88%91%E4%BB%AC%E5%86%B3%E5%AE%9A%E5%A5%BD%E5%A5%BD%E7%B3%BB%E7%BB%9F%E7%A0%94%E7%A9%B6%E4%B8%80%E4%B8%8B%E4%BB%96%E7%9A%84%E9%BB%98%E8%AE%A4%E5%80%BC%E4%BB%A5%E5%8F%8Ahashcode%E7%9A%84%E6%AF%94%E8%BE%83%E3%80%82%EF%BC%88%E7%90%86%E8%A7%A3%E4%B8%80%E4%B8%AA%E4%B8%9C%E8%A5%BF%E6%9C%80%E5%A5%BD%E7%9A%84%E5%8A%9E%E6%B3%95%E5%B0%B1%E6%98%AF%E9%98%85%E8%AF%BB%E6%BA%90%E7%A0%81%E4%BB%A5%E5%8F%8A%E6%BA%90%E7%A0%81%E6%B3%A8%E9%87%8A%EF%BC%89%0A%E5%85%A8%E6%96%87%E4%BC%9A%E4%B8%BB%E8%A6%81%E8%AE%B2%E8%A7%A3%E4%BB%A5%E4%B8%8B%E5%87%A0%E4%B8%AA%E9%97%AE%E9%A2%98%EF%BC%9F%0A1.%E4%B8%BA%E4%BB%80%E4%B9%88%E9%BB%98%E8%AE%A4%E5%80%BC%E6%98%AF16%EF%BC%9F%0A2.%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E6%89%A9%E5%AE%B9%EF%BC%9F%0A3.%E4%B8%BA%E4%BB%80%E4%B9%88%E5%8A%A0%E8%BD%BD%E5%9B%A0%E5%AD%90%E6%98%AF0.75%EF%BC%9F%0A%0A%23%23%23%23%23%20%E4%B8%BA%E4%BB%80%E4%B9%88%E9%BB%98%E8%AE%A4%E5%80%BC%E6%98%AF16%EF%BC%9F%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E6%89%A9%E5%AE%B9%EF%BC%9F%0A%20%E9%A6%96%E5%85%88%E9%9C%80%E8%A6%81%E7%9F%A5%E9%81%93hashmap%E7%9A%84%E5%BA%95%E5%B1%82%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%EF%BC%8C%E6%98%AF%E6%95%B0%E7%BB%84%E5%8A%A0%E9%93%BE%E8%A1%A8%E3%80%82%E6%97%A2%E7%84%B6%E8%BF%99%E6%A0%B7%E5%B0%B1%E4%B8%80%E5%AE%9A%E4%BC%9A%E5%8F%91%E7%94%9Fhash%E7%A2%B0%E6%92%9E%EF%BC%88%E4%B8%8D%E4%BA%86%E8%A7%A3%E7%9A%84%E8%AF%B7%E7%9C%8B%E4%B9%8B%E5%89%8D%E7%9A%84%E6%96%87%E7%AB%A0%EF%BC%89%E3%80%82%E5%85%B6%E5%AE%9E%E4%B8%AA%E4%BA%BA%E8%A7%89%E5%BE%9716%E5%B0%B1%E6%98%AF%E4%B8%BA%E4%BA%86%E5%9D%87%E5%8C%80%E5%88%86%E5%B8%83%E3%80%82%E4%BD%BF%E7%A2%B0%E6%92%9E%E5%87%8F%E5%B0%91%E3%80%82%E5%90%8C%E6%97%B6%E9%80%9A%E8%BF%87%E9%98%85%E8%AF%BB%E6%BA%90%E7%A0%81%E6%88%91%E4%BB%AC%E5%8F%AF%E4%BB%A5%E7%9F%A5%E9%81%93%E5%A6%82%E4%BD%95%E7%94%9F%E6%88%90hash%EF%BC%88java%201.8%E6%BA%90%E7%A0%81%EF%BC%89%0A%20%0A%60%60%60%0Astatic%20final%20int%20hash(Object%20key)%20%7B%0A%20%20%20%20%20%20%20%20int%20h%3B%0A%20%20%20%20%20%20%20%20return%20(key%20%3D%3D%20null)%20%3F%200%20%3A%20(h%20%3D%20key.hashCode())%20%5E%20(h%20%3E%3E%3E%2016)%3B%0A%20%20%20%20%7D%0A%60%60%60%0A!%5B3023137637289e940d94817227a5ce71.png%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp20)%0A%0A%E4%BB%A5%E4%B8%8A%E5%B0%B1%E6%98%AF%E4%B8%80%E4%B8%AA%E7%94%9F%E6%88%90hash%E7%9A%84%E8%A7%A3%E9%87%8A%EF%BC%8C%E7%9B%B8%E4%BF%A1%E5%A4%A7%E5%AE%B6%E4%B9%9F%E6%B2%A1%E6%9C%89%E8%AF%A6%E7%BB%86%E7%9C%8B%E8%BF%87%EF%BC%8C%E5%9C%A8%E8%BF%99%E9%87%8C%E6%88%91%E7%BB%99%E5%A4%A7%E5%AE%B6%E5%81%9A%E4%B8%80%E4%B8%8B%E8%A7%A3%E9%87%8A%E3%80%82%E5%B0%B1%E6%98%AF%E8%B0%83%E7%94%A8object%E6%9C%AC%E8%BA%AB%E7%9A%84%E7%94%9F%E6%88%90hashcode%20%E5%92%8C%20h%20%3E%3E%3E%EF%BC%88%E6%97%A0%E7%AC%A6%E5%8F%B7%E5%8F%B3%E7%A7%BB%E8%BF%90%E7%AE%97%E7%AC%A6%EF%BC%8916%E4%BD%8D%E4%B9%8B%E5%90%8E%20%E5%8F%96%E5%BC%82%E6%88%96%E7%9A%84%E5%80%BC%E5%B0%B1%E6%98%AFhash%E5%80%BC%E3%80%82%E5%85%B7%E4%BD%93%E4%BB%80%E4%B9%88%E6%98%AF%E5%BC%82%E6%88%96%E3%80%81%E6%97%A0%E7%AC%A6%E5%8F%B7%E5%8F%B3%E7%A7%BB%E3%80%82%E8%AF%B7%E8%87%AA%E5%B7%B1%E8%87%AA%E8%A1%8C%E7%99%BE%E5%BA%A6%E8%B0%B7%E6%AD%8C%E5%90%A7%E3%80%82%0A!%5B7023ec3ebe3d0601bfb398b4bbb2e763.png%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp21)%0A%0A%E8%BF%99%E4%B8%AA%E5%9B%BE%E4%B8%AD%E5%B0%B1%E6%98%AFhash%E4%B8%8E%E5%88%9D%E5%A7%8B%E5%8C%96%E7%9A%84%E6%9C%80%E5%A4%A7%E5%80%BC%E5%87%8F1%EF%BC%8C%E5%81%9A%E4%B8%8E%E8%BF%90%E7%AE%97%E3%80%82%E7%84%B6%E5%90%8E%E7%A1%AE%E5%AE%9A%E5%AD%98%E5%82%A8%E7%9A%84%E4%BD%8D%E7%BD%AE%E3%80%82%E6%9C%89%E5%8F%AF%E8%83%BD%E6%9C%89%E4%BA%BA%E4%BC%9A%E9%97%AE%E4%BA%86%E3%80%82%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AF16%EF%BC%9F%E4%B8%8D%E6%98%AF10%E3%80%819%E3%80%8125%E3%80%81%E4%B9%8B%E7%B1%BB%E7%9A%84%E5%91%A2%EF%BC%9F%E4%B8%BA%E4%BB%80%E4%B9%88%E8%A6%81%E5%87%8F1%E5%91%A2%EF%BC%9F%0A%E5%85%B6%E5%AE%9E%E8%BF%99%E9%87%8C%E6%B6%89%E5%8F%8A%E5%88%B0%E4%B8%80%E4%B8%AA%E7%AE%80%E5%8D%95%E7%9A%84%E9%80%BB%E8%BE%91%EF%BC%8C%E4%B8%8B%E9%9D%A2%E7%BB%99%E5%A4%A7%E5%AE%B6%E7%9C%8B%E4%B8%80%E4%B8%8B%EF%BC%9A%0A%60%60%60%0A%E5%8D%81%E8%BF%9B%E5%88%B6%3A%C2%A0%20201314%C2%A0%0A%E4%BA%8C%E8%BF%9B%E5%88%B6%3A%C2%A0%C2%A011%200001%200010%200110%200010%0A%E5%81%87%E8%AE%BE%E5%88%9D%E5%A7%8B%E5%8C%96%E5%A4%A7%E5%B0%8F%E4%B8%BA16%0A15%E8%BD%AC%E5%8C%96%E4%B8%BA%E4%BA%8C%E8%BF%9B%E5%88%B6%3A%201111%0Aindex%20%3A%C2%A011%200001%200010%200110%200010%20%26%C2%A01111%20%3D0010%C2%A0%20%E4%B8%BA%203%C2%A0%0A%E5%81%87%E8%AE%BE%E5%88%9D%E5%A7%8B%E5%8C%96%E5%A4%A7%E5%B0%8F%E4%B8%BA10%0A10%E8%BD%AC%E5%8C%96%E4%B8%BA%E4%BA%8C%E8%BF%9B%E5%88%B6%3A%201010%0Aindex%3A%C2%A011%200001%200010%200110%200010%20%26%C2%A01010%3D0010%C2%A0%20%E4%B8%BA%203%0A%60%60%60%0A%E5%9B%A0%E4%B8%BA%E6%98%AF%E5%B0%86%E4%BA%8C%E8%BF%9B%E5%88%B6%E8%BF%9B%E8%A1%8C%E6%8C%89%E4%BD%8D%E4%BA%8E%EF%BC%8C(16-1)%C2%A0%E6%98%AF%201111%2C%E6%9C%AB%E4%BD%8D%E6%98%AF1%EF%BC%8C%E8%BF%99%E6%A0%B7%E4%B9%9F%E8%83%BD%E4%BF%9D%E8%AF%81%E8%AE%A1%E7%AE%97%E5%90%8E%E7%9A%84index%E6%97%A2%E5%8F%AF%E4%BB%A5%E6%98%AF%E5%A5%87%E6%95%B0%E4%B9%9F%E5%8F%AF%E4%BB%A5%E6%98%AF%E5%81%B6%E6%95%B0%EF%BC%8C%E5%B9%B6%E4%B8%94%E5%8F%AA%E8%A6%81%E4%BC%A0%E8%BF%9B%E6%9D%A5%E7%9A%84key%E8%B6%B3%E5%A4%9F%E5%88%86%E6%95%A3%EF%BC%8C%E5%9D%87%E5%8C%80%E9%82%A3%E4%B9%88%E6%8C%89%E4%BD%8D%E4%BA%8E%E7%9A%84%E6%97%B6%E5%80%99%E8%8E%B7%E5%BE%97%E7%9A%84index%E5%B0%B1%E4%BC%9A%E5%87%8F%E5%B0%91%E9%87%8D%E5%A4%8D%EF%BC%8C%E8%BF%99%E6%A0%B7%E4%B9%9F%E5%B0%B1%E5%87%8F%E5%B0%91%E4%BA%86hash%E7%9A%84%E7%A2%B0%E6%92%9E%E4%BB%A5%E5%8F%8AhashMap%E7%9A%84%E6%9F%A5%E8%AF%A2%E6%95%88%E7%8E%87%E3%80%82%0A%E9%82%A3%E4%B9%88%E5%88%B0%E4%BA%86%E8%BF%99%E9%87%8C%E4%BD%A0%E4%B9%9F%E8%AE%B8%E4%BC%9A%E9%97%AE%EF%BC%9F%20%E9%82%A3%E4%B9%88%E5%B0%B1%E7%84%B616%E5%8F%AF%E4%BB%A5%EF%BC%8C%E6%98%AF%E4%B8%8D%E6%98%AF%E5%8F%AA%E8%A6%81%E6%98%AF2%E7%9A%84%E6%95%B4%E6%95%B0%E6%AC%A1%E5%B9%82%E5%B0%B1%E5%8F%AF%E4%BB%A5%E5%91%A2%EF%BC%9F%E9%82%A3%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E6%98%AF8%2C4%E5%91%A2%EF%BC%9F%20%E4%B8%AA%E4%BA%BA%E8%A7%89%E5%BE%97%E5%9B%A0%E4%B8%BA%E6%98%AF8%E6%88%96%E8%80%854%E7%9A%84%E8%AF%9D%E5%BE%88%E5%AE%B9%E6%98%93%E5%AF%BC%E8%87%B4map%E6%89%A9%E5%AE%B9%E5%BD%B1%E5%93%8D%E6%80%A7%E8%83%BD%EF%BC%8C%E5%A6%82%E6%9E%9C%E5%88%86%E9%85%8D%E7%9A%84%E5%A4%AA%E5%A4%A7%E7%9A%84%E8%AF%9D%E5%8F%88%E4%BC%9A%E6%B5%AA%E8%B4%B9%E8%B5%84%E6%BA%90%EF%BC%8C%E6%89%80%E4%BB%A5%E5%B0%B1%E4%BD%BF%E7%94%A816%E4%BD%9C%E4%B8%BA%E5%88%9D%E5%A7%8B%E5%A4%A7%E5%B0%8F%E3%80%82%0A%0A%23%23%23%23%23%20%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E6%89%A9%E5%AE%B9%E5%91%A2%EF%BC%9F%E6%BA%90%E7%A0%81%E4%B8%AD%E7%BB%99%E4%BA%86%E7%AD%94%E6%A1%88%EF%BC%9A%0A!%5B53c8e8964c3164b62893630e1d453f70.png%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp22)%0A%0A%E8%BE%BE%E5%88%B0%E4%BD%A0%E5%AE%9A%E4%B9%89%E7%9A%84%E5%88%9D%E5%A7%8B%E5%8C%96%E5%80%BC%E7%9A%840.75%E5%80%8D%E6%97%B6%E5%80%99%E5%B0%B1%E4%BC%9A%E6%89%A9%E5%AE%B9%E5%88%B0%E5%8E%9F%E6%9D%A5%E7%9A%842%E5%80%8D%E3%80%82%E6%9C%89%E7%9A%84%E4%BA%BA%E5%8F%88%E8%A6%81%E9%97%AE%E4%BA%86%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AF2%E5%80%8D%EF%BC%8C%E4%B8%8D%E6%98%AF0.5%EF%BC%8C1.5%E4%B9%8B%E7%B1%BB%E7%9A%84%E5%91%A2%EF%BC%9F%E6%BA%90%E7%A0%81%E4%B8%AD%E7%BB%99%E4%BA%86%E4%B8%80%E4%B8%AA%E6%96%B9%E6%B3%95%EF%BC%9A%E6%A0%B9%E6%8D%AE%E4%BC%A0%E8%BF%87%E6%9D%A5%E7%9A%84%E5%AE%9A%E4%B9%89%E7%9A%84map%E5%A4%A7%E5%B0%8F%E6%9D%A5%E8%BF%9B%E8%A1%8C%E6%88%96%E8%BF%90%E7%AE%97%E4%B9%8B%E5%90%8E%E5%BE%97%E5%88%B0%E6%89%A9%E5%AE%B9%E4%B9%8B%E5%90%8E%E7%9A%842%E5%80%8D%E3%80%82%0A%0A!%5B180fbf2cc4a4ae720d0c2fdbc041d5a7.png%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp24)%0A%0A%E7%9C%8B%E4%BA%86%E4%B8%8B%E6%BA%90%E7%A0%81%E6%B3%A8%E9%87%8A%E5%A6%82%E4%B8%8B%EF%BC%9A%0A%0A!%5B56279ce84e67c6a7d3547cda8959a32d.png%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp23)%0A%0A%E4%B8%AA%E4%BA%BA%E8%A7%89%E5%BE%972%E5%80%8D%E4%B9%8B%E5%90%8E%E8%BF%98%E6%98%AF%E6%96%B9%E4%BE%BF%E5%8F%96%E5%80%BC%E6%88%96%E8%80%85%E5%81%9A%E4%B8%8E%E8%BF%90%E7%AE%97%EF%BC%9A%E4%B8%8B%E9%9D%A2%E4%B9%9F%E6%98%AF%E6%BA%90%E7%A0%81%E4%B8%AD%E7%9A%84%E5%8F%96%E5%80%BC%E7%9A%84%E6%96%B9%E6%B3%95%EF%BC%9A%0A!%5B7c2dccd777ea375a1fb962b56fd4264b.png%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp25)%0A%0A%0A%23%23%23%23%23%20%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AF0.75%EF%BC%9F%0A%E6%BA%90%E7%A0%81%E4%B8%AD%E7%BB%99%E5%88%B0%E4%BA%86%E4%B8%80%E4%BA%9B%EF%BC%8C%E7%AE%80%E5%8D%95%E6%9D%A5%E8%AF%B4%E5%B0%B1%E6%98%AF%E4%B8%BA%E4%BA%86%E5%87%8F%E5%B0%91%E5%BC%80%E9%94%80%EF%BC%9F%E5%A6%82%E6%9E%9C%E4%B8%BA0.5%20%E6%97%B6%E5%80%99%E6%89%A9%E5%AE%B9%E4%BC%9A%E6%9E%81%E5%A4%A7%E6%B5%AA%E8%B4%B9%E7%A9%BA%E9%97%B4%E3%80%820.8%E4%B9%8B%E7%B1%BB%E7%9A%84%E5%BA%94%E8%AF%A5%E6%98%AFhash%E7%A2%B0%E6%92%9E%E6%AF%94%E8%BE%83%E9%AB%98%EF%BC%8C%E6%89%80%E4%BB%A5%E9%80%89%E6%8B%A9%E4%B8%80%E4%B8%AA%E6%8A%98%E4%B8%AD%E5%80%BC%E3%80%82%E8%80%8C%E4%B8%94%E5%92%8C%E9%BB%98%E8%AE%A416%E4%B8%80%E5%90%8C%E4%BD%BF%E7%94%A8%EF%BC%8C%E5%88%99%E6%98%AF%E4%B8%80%E4%B8%AA%E5%AE%8C%E7%BE%8E%E7%9A%84%E5%8A%A0%E8%BD%BD%E5%9B%A0%E5%AD%90%E3%80%82%0A%60%60%60%0A%3Cp%3EAs%20a%20general%20rule%2C%20the%20default%20load%20factor%20(.75)%20offers%20a%20good%0A%20*%20tradeoff%20between%20time%20and%20space%20costs.%20%20Higher%20values%20decrease%20the%0A%20*%20space%20overhead%20but%20increase%20the%20lookup%20cost%20(reflected%20in%20most%20of%0A%20*%20the%20operations%20of%20the%20%3Ctt%3EHashMap%3C%2Ftt%3E%20class%2C%20including%0A%20*%20%3Ctt%3Eget%3C%2Ftt%3E%20and%20%3Ctt%3Eput%3C%2Ftt%3E).%20%20The%20expected%20number%20of%20entries%20in%0A%20*%20the%20map%20and%20its%20load%20factor%20should%20be%20taken%20into%20account%20when%0A%20*%20setting%20its%20initial%20capacity%2C%20so%20as%20to%20minimize%20the%20number%20of%0A%20*%20rehash%20operations.%20%20If%20the%20initial%20capacity%20is%20greater%20than%20the%0A%20*%20maximum%20number%20of%20entries%20divided%20by%20the%20load%20factor%2C%20no%20rehash%0A%20*%20operations%20will%20ever%20occur.%0A%60%60%60%0A%0A%E6%88%91%E7%AD%89%E9%87%87%E7%9F%B3%E4%B9%8B%E4%BA%BA%EF%BC%8C%E5%BD%93%E5%BF%83%E6%80%80%E5%A4%A7%E6%95%99%E5%A0%82%E4%B9%8B%E6%84%BF%E6%99%AF%EF%BC%81%E6%AC%A2%E8%BF%8E%E5%85%B3%E6%B3%A8%E6%88%91%E7%9A%84%E5%85%AC%E4%BC%97%E5%8F%B7%EF%BC%81%EF%BC%81%0A!%5B1459af53d33cc8704a8775b198eb3b72.jpeg%5D(evernotecid%3A%2F%2F8EE5EC85-4ED7-4997-B090-651003AE80EE%2Fappyinxiangcom%2F20163437%2FENResource%2Fp40)%0A
+</center>
+</body>
+</html>
